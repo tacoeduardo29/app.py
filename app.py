@@ -42,7 +42,7 @@ def obtener_precio():
       pass
 
     # Paso 1: Consultar directo el JSON del SKU solicitado por GET para la tienda 8734
-    url_paso1 = f"https://www.homedepot.com.mx/_next/data/{build_id}/default/s/{sku}.json?keyword={sku}&storeId=8734"
+    url_paso1 = f"https://www.homedepot.com.mx/_next/data/{build_id}/default/s/{sku}.json"
     res1 = scraper.get(url_paso1, headers=headers, timeout=10)
 
     if res1.status_code != 200:
