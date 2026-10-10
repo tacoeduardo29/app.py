@@ -25,25 +25,38 @@ def obtener_precio():
   }
 
   try:
-    # Paso 0: Obtener el buildId dinámicamente de Home Depot en tiempo real
+    # Paso 0: Obtener el buildId dinámicamente con múltiples patrones de respaldo
     home_res = scraper.get(
         "https://www.homedepot.com.mx/", headers=headers, timeout=10
     )
-    build_id_match = re.search(
-        r'"buildId"\s*:\s*"([^"]+)"', home_res.text
-    ) or re.search(r'/_next/data/([^/]+)/', home_res.text)
 
-    if not build_id_match:
+    build_id = None
+    # Patrón 1: Buscar en el JSON de Next.js (__NEXT_DATA__)
+    match_nd = re.search(r'"buildId"\s*:\s*"([^"]+)"', home_res.text)
+    if match_nd:
+      build_id = match_nd.group(1)
+
+    # Patrón 2: Buscar en las rutas de los scripts de _next
+    if not build_id:
+      match_path = re.search(r'/_next/static/([^/]+)/_buildManifest\.js', home_res.text)
+      if match_path:
+        build_id = match_path.group(1)
+
+    # Patrón 3: Respaldo genérico buscando cualquier hash de buildId en URLs de next
+    if not build_id:
+      match_gen = re.search(r'/_next/data/([^/]+)/', home_res.text)
+      if match_gen:
+        build_id = match_gen.group(1)
+
+    if not build_id:
       return (
           jsonify({
               "error": (
-                  "No se pudo extraer el buildId dinámico de Home Depot"
+                  "No se pudo extraer el buildId dinámico de Home Depot de ninguna forma."
               )
           }),
           500,
       )
-
-    build_id = build_id_match.group(1)
 
     # Preparamos los headers específicos para peticiones Next.js JSON
     json_headers = headers.copy()
@@ -57,7 +70,7 @@ def obtener_precio():
     if res1.status_code != 200:
       return (
           jsonify({
-              "error": f"Error en paso 1 (Status {res1.status_code}). BuildId: {build_id}"
+              "error": f"Error en paso 1 (Status {res1.status_code}). BuildId usado: {build_id}"
           }),
           500,
       )
@@ -81,7 +94,7 @@ def obtener_precio():
 
     json_texto = res2.text
 
-    # Búsqueda directa del precio en el campo "value" de la oferta
+    # Búsqueda robusta del precio en la oferta o estructuras de tienda
     match_precio = re.search(
         r'"usage"\s*:\s*"Offer"[^}]*?"value"\s*:\s*"?([0-9\.]+)"?', json_texto
     )
