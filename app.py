@@ -81,13 +81,26 @@ def obtener_precio():
 
     json_texto = res2.text
 
-    # Extraer precio exacto de la tienda 8734 buscando la estructura mxn
+    # Búsqueda directa del precio en el campo "value" de la oferta
     match_precio = re.search(
-        r'"8734"\s*:\s*\{[^}]*"mxn"\s*:\s*"?([0-9\.]+)"?', json_texto
+        r'"usage"\s*:\s*"Offer"[^}]*?"value"\s*:\s*"?([0-9\.]+)"?', json_texto
     )
     if not match_precio:
       match_precio = re.search(
-          r'8734[^}]{0,150}"mxn"\s*:\s*"?([0-9\.]+)"?', json_texto
+          r'"currency"\s*:\s*"MXN"[^}]*?"value"\s*:\s*"?([0-9\.]+)"?',
+          json_texto,
+      )
+    if not match_precio:
+      match_precio = re.search(
+          r'"value"\s*:\s*"?([0-9\.]+)"?[^}]*?"usage"\s*:\s*"Offer"', json_texto
+      )
+    if not match_precio:
+      match_precio = re.search(
+          r'"8734"[^}]*?"mxn"\s*:\s*"?([0-9\.]+)"?', json_texto
+      )
+    if not match_precio:
+      match_precio = re.search(
+          r'"internetPrice"\s*:\s*"?([0-9\.]+)"?', json_texto
       )
 
     precio_reynosa = (
