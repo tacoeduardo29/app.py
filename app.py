@@ -37,134 +37,80 @@ def obtener_precio():
   }
 
   try:
-    # Paso 0: Obtener un buildId fresco directamente de la página principal
-    home_res = scraper.get(
-        "https://www.homedepot.com.mx/", headers=headers, timeout=10
-    )
+    # Usamos la URL oficial de búsqueda con tienda fija 8734
+    url = f"https://www.homedepot.com.mx/s?keyword={sku}&storeId=8734"
+    res = scraper.get(url, headers=headers, timeout=12)
 
-    build_id = None
-    match_nd = re.search(r'"buildId"\s*:\s*"([^"]+)"', home_res.text)
-    if match_nd:
-      build_id = match_nd.group(1)
-    else:
-      match_gen = re.search(r'/_next/data/([^/]+)/', home_res.text)
-      if match_gen:
-        build_id = match_gen.group(1)
-
-    if not build_id:
+    if res.status_code != 200:
       return jsonify({
           "status": "error",
           "sku": sku,
-          "mensaje": (
-              "Cloudflare bloqueó temporalmente la sesión. Intenta de nuevo."
-          ),
+          "mensaje": f"Error de conexión con Home Depot (Status {res.status_code})",
       }), 500
 
-    # Headers específicos para peticiones Next.js JSON
-    json_headers = headers.copy()
-    json_headers["Accept"] = "application/json, text/plain, */*"
-    json_headers["X-Nextjs-Data"] = "1"
+    html = res.text
 
-    # Paso 1: Consultar el JSON del SKU con la tienda 8734 y el buildId fresco
-    url_paso1 = f"https://www.homedepot.com.mx/_next/data/{build_id}/default/s/{sku}.json?keyword={sku}&storeId=8734"
-    res1 = scraper.get(url_paso1, headers=json_headers, timeout=10)
-
-    if res1.status_code != 200:
+    # Validar si el SKU se encuentra en el contenido
+    if sku not in html:
       return jsonify({
           "status": "error",
           "sku": sku,
           "mensaje": f"El SKU {sku} no existe o no está disponible en Home Depot.",
       }), 404
 
-    data1 = res1.json()
-    redirect_path = data1.get("pageProps", {}).get("__N_REDIRECT", "")
-
-    if not redirect_path:
-      return jsonify({
-          "status": "error",
-          "sku": sku,
-          "mensaje": f"No se encontró la ruta del producto para el SKU {sku}",
-      }), 404
-
-    # Paso 2: Consultar el JSON final del producto con la redirección obtenida
-    if redirect_path.startswith("/"):
-      url_paso2 = f"https://www.homedepot.com.mx/_next/data/{build_id}/default{redirect_path}.json?storeId=8734"
+    # Extraer el bloque que rodea al SKU para evitar cruzar precios de otros productos
+    bloque = ""
+    pos = html.find(sku)
+    if pos != -1:
+      bloque = html[max(0, pos - 600) : min(len(html), pos + 1800)]
     else:
-      url_paso2 = f"https://www.homedepot.com.mx/_next/data/{build_id}/default/{redirect_path}.json?storeId=8734"
+      bloque = html
 
-    res2 = scraper.get(url_paso2, headers=json_headers, timeout=10)
-
-    if res2.status_code != 200:
-      return jsonify({
-          "status": "error",
-          "sku": sku,
-          "mensaje": "Error al obtener los detalles del producto",
-      }), 500
-
-    json_texto = res2.text
-
-    # Aislar el bloque exacto del SKU para evitar agarrar precios de otros lados
-    bloque_producto = ""
-    pos_sku = json_texto.find(f'"{sku}"')
-    if pos_sku != -1:
-      inicio = max(0, pos_sku - 500)
-      fin = min(len(json_texto), pos_sku + 1500)
-      bloque_producto = json_texto[inicio:fin]
-    else:
-      bloque_producto = json_texto
-
-    # Búsqueda del precio estrictamente dentro del bloque
+    # Buscar el precio en formato de oferta o valor dentro del bloque
     match_precio = re.search(
-        r'"usage"\s*:\s*"Offer"[^}]*?"value"\s*:\s*"?([0-9\.]+)"?',
-        bloque_producto,
+        r'"usage"\s*:\s*"Offer"[^}]*?"value"\s*:\s*"?([0-9\.]+)"?', bloque
     )
     if not match_precio:
       match_precio = re.search(
-          r'"currency"\s*:\s*"MXN"[^}]*?"value"\s*:\s*"?([0-9\.]+)"?',
-          bloque_producto,
+          r'"value"\s*:\s*"?([0-9\.]+)"?[^}]*?"usage"\s*:\s*"Offer"', bloque
       )
     if not match_precio:
       match_precio = re.search(
-          r'"value"\s*:\s*"?([0-9\.]+)"?[^}]*?"usage"\s*:\s*"Offer"',
-          bloque_producto,
+          r'"currency"\s*:\s*"MXN"[^}]*?"value"\s*:\s*"?([0-9\.]+)"?', bloque
       )
     if not match_precio:
       match_precio = re.search(
-          r'"8734"[^}]*?"mxn"\s*:\s*"?([0-9\.]+)"?', bloque_producto
+          r'8734[^}]{0,150}"mxn"\s*:\s*"?([0-9\.]+)"?', bloque
       )
     if not match_precio:
-      match_precio = re.search(
-          r'"internetPrice"\s*:\s*"?([0-9\.]+)"?', bloque_producto
-      )
+      match_precio = re.search(r'"internetPrice"\s*:\s*"?([0-9\.]+)"?', bloque)
 
-    precio_reynosa = (
+    precio = (
         f"${match_precio.group(1)} MXN"
         if match_precio
         else "No disponible en Reynosa"
     )
 
-    # Extraer nombre
+    # Extraer el nombre del producto
     match_nombre = re.search(
-        r'"sellerId"\s*:\s*"[^"]+"\s*,\s*"name"\s*:\s*"([^"]+)"', bloque_producto
+        r'"sellerId"\s*:\s*"[^"]+"\s*,\s*"name"\s*:\s*"([^"]+)"', bloque
     )
     if not match_nombre:
-      match_nombre = re.search(r'"name"\s*:\s*"([^"]+)"', bloque_producto)
+      match_nombre = re.search(r'"name"\s*:\s*"([^"]+)"', bloque)
 
-    nombre_prod = (
-        match_nombre.group(1) if match_nombre else "Producto Home Depot"
-    )
+    nombre = match_nombre.group(1) if match_nombre else f"Producto SKU {sku}"
 
-    # Imagen directa basada en el SKU recibido por GET
-    imagen_url = f"https://cdn.homedepot.com.mx/productos/{sku}/{sku}-d.jpg"
+    # Imagen oficial directa
+    imagen = f"https://cdn.homedepot.com.mx/productos/{sku}/{sku}-d.jpg"
 
     return jsonify({
         "status": "exito",
         "sku": sku,
         "tienda": "8734 (Reynosa)",
-        "nombre": nombre_prod,
-        "precio": precio_reynosa,
-        "imagen": imagen_url,
-        "enlace": f"https://www.homedepot.com.mx{redirect_path}",
+        "nombre": nombre,
+        "precio": precio,
+        "imagen": imagen,
+        "enlace": f"https://www.homedepot.com.mx/s?keyword={sku}",
     })
 
   except Exception as e:
