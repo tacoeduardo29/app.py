@@ -9,7 +9,6 @@ app = Flask(__name__)
 @app.route("/")
 def obtener_precio():
   sku = request.args.get("sku", "209374")
-  build_id = "yIwmJ6bE4IQPRstVmEt5r"
 
   scraper = cloudscraper.create_scraper()
   headers = {
@@ -17,19 +16,51 @@ def obtener_precio():
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
           " like Gecko) Chrome/124.0.0.0 Safari/537.36"
       ),
-      "Accept": "application/json, text/plain, */*",
-      "X-Nextjs-Data": "1",
+      "Accept": (
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+      ),
+      "Accept-Language": "es-MX,es;q=0.9",
       "Referer": "https://www.homedepot.com.mx/",
       "Cookie": "currentStore=8734; storeId=8734;",
   }
 
   try:
-    # Paso 1: Consultar JSON inicial del SKU pasando la tienda 8734
+    # Paso 0: Obtener el buildId dinámicamente de Home Depot en tiempo real
+    home_res = scraper.get(
+        "https://www.homedepot.com.mx/", headers=headers, timeout=10
+    )
+    build_id_match = re.search(
+        r'"buildId"\s*:\s*"([^"]+)"', home_res.text
+    ) or re.search(r'/_next/data/([^/]+)/', home_res.text)
+
+    if not build_id_match:
+      return (
+          jsonify({
+              "error": (
+                  "No se pudo extraer el buildId dinámico de Home Depot"
+              )
+          }),
+          500,
+      )
+
+    build_id = build_id_match.group(1)
+
+    # Preparamos los headers específicos para peticiones Next.js JSON
+    json_headers = headers.copy()
+    json_headers["Accept"] = "application/json, text/plain, */*"
+    json_headers["X-Nextjs-Data"] = "1"
+
+    # Paso 1: Consultar JSON inicial del SKU pasando la tienda 8734 y el buildId fresco
     url_paso1 = f"https://www.homedepot.com.mx/_next/data/{build_id}/default/s/{sku}.json?keyword={sku}&storeId=8734"
-    res1 = scraper.get(url_paso1, headers=headers)
+    res1 = scraper.get(url_paso1, headers=json_headers)
 
     if res1.status_code != 200:
-      return jsonify({"error": f"Error en paso 1: {res1.status_code}"}), 500
+      return (
+          jsonify({
+              "error": f"Error en paso 1 (Status {res1.status_code}). BuildId: {build_id}"
+          }),
+          500,
+      )
 
     data1 = res1.json()
     redirect_path = data1.get("pageProps", {}).get("__N_REDIRECT", "")
@@ -43,7 +74,7 @@ def obtener_precio():
     else:
       url_paso2 = f"https://www.homedepot.com.mx/_next/data/{build_id}/default/{redirect_path}.json?storeId=8734"
 
-    res2 = scraper.get(url_paso2, headers=headers)
+    res2 = scraper.get(url_paso2, headers=json_headers)
 
     if res2.status_code != 200:
       return jsonify({"error": f"Error en paso 2: {res2.status_code}"}), 500
