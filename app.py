@@ -8,7 +8,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def obtener_precio():
-  sku = request.args.get("sku", "209374")
+  sku = request.args.get("sku", "209374").strip()
 
   scraper = cloudscraper.create_scraper()
   headers = {
@@ -25,24 +25,16 @@ def obtener_precio():
   }
 
   try:
-    # Paso 0: Obtener el buildId dinámicamente con múltiples patrones de respaldo
+    # Paso 0: Obtener el buildId dinámicamente de Home Depot
     home_res = scraper.get(
         "https://www.homedepot.com.mx/", headers=headers, timeout=10
     )
 
     build_id = None
-    # Patrón 1: Buscar en el JSON de Next.js (__NEXT_DATA__)
     match_nd = re.search(r'"buildId"\s*:\s*"([^"]+)"', home_res.text)
     if match_nd:
       build_id = match_nd.group(1)
 
-    # Patrón 2: Buscar en las rutas de los scripts de _next
-    if not build_id:
-      match_path = re.search(r'/_next/static/([^/]+)/_buildManifest\.js', home_res.text)
-      if match_path:
-        build_id = match_path.group(1)
-
-    # Patrón 3: Respaldo genérico buscando cualquier hash de buildId en URLs de next
     if not build_id:
       match_gen = re.search(r'/_next/data/([^/]+)/', home_res.text)
       if match_gen:
@@ -51,35 +43,45 @@ def obtener_precio():
     if not build_id:
       return (
           jsonify({
-              "error": (
-                  "No se pudo extraer el buildId dinámico de Home Depot de ninguna forma."
-              )
+              "status": "error",
+              "mensaje": "No se pudo obtener el buildId de Home Depot",
           }),
           500,
       )
 
-    # Preparamos los headers específicos para peticiones Next.js JSON
     json_headers = headers.copy()
     json_headers["Accept"] = "application/json, text/plain, */*"
     json_headers["X-Nextjs-Data"] = "1"
 
-    # Paso 1: Consultar JSON inicial del SKU pasando la tienda 8734 y el buildId fresco
+    # Paso 1: Consultar JSON inicial del SKU pasando la tienda 8734
     url_paso1 = f"https://www.homedepot.com.mx/_next/data/{build_id}/default/s/{sku}.json?keyword={sku}&storeId=8734"
     res1 = scraper.get(url_paso1, headers=json_headers)
 
+    # Si el SKU no existe en Home Depot, devolvemos un mensaje limpio en vez de trabarse
     if res1.status_code != 200:
       return (
           jsonify({
-              "error": f"Error en paso 1 (Status {res1.status_code}). BuildId usado: {build_id}"
+              "status": "error",
+              "sku": sku,
+              "mensaje": (
+                  f"El SKU {sku} no existe o no está disponible en Home Depot."
+              ),
           }),
-          500,
+          404,
       )
 
     data1 = res1.json()
     redirect_path = data1.get("pageProps", {}).get("__N_REDIRECT", "")
 
     if not redirect_path:
-      return jsonify({"error": "No se encontró la redirección __N_REDIRECT"}), 404
+      return (
+          jsonify({
+              "status": "error",
+              "sku": sku,
+              "mensaje": "No se encontró redirección para este producto.",
+          }),
+          404,
+      )
 
     # Paso 2: Consultar el JSON final del producto
     if redirect_path.startswith("/"):
@@ -90,11 +92,18 @@ def obtener_precio():
     res2 = scraper.get(url_paso2, headers=json_headers)
 
     if res2.status_code != 200:
-      return jsonify({"error": f"Error en paso 2: {res2.status_code}"}), 500
+      return (
+          jsonify({
+              "status": "error",
+              "sku": sku,
+              "mensaje": "Error al obtener los detalles del producto.",
+          }),
+          500,
+      )
 
     json_texto = res2.text
 
-    # Búsqueda robusta del precio en la oferta o estructuras de tienda
+    # Búsqueda robusta del precio
     match_precio = re.search(
         r'"usage"\s*:\s*"Offer"[^}]*?"value"\s*:\s*"?([0-9\.]+)"?', json_texto
     )
@@ -122,7 +131,7 @@ def obtener_precio():
         else "No disponible en Reynosa"
     )
 
-    # Extraer nombre ubicado exactamente después del sellerId
+    # Extraer nombre ubicado después del sellerId
     match_nombre = re.search(
         r'"sellerId"\s*:\s*"[^"]+"\s*,\s*"name"\s*:\s*"([^"]+)"', json_texto
     )
@@ -147,7 +156,7 @@ def obtener_precio():
     })
 
   except Exception as e:
-    return jsonify({"error": str(e)}), 500
+    return jsonify({"status": "error", "mensaje": str(e)}), 500
 
 
 if __name__ == "__main__":
