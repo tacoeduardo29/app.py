@@ -18,7 +18,7 @@ def obtener_precio():
     return jsonify({
         "status": "error",
         "mensaje": (
-            "Falta el parámetro SKU en la URL. Ejemplo: /?sku=631708"
+            "Falta el parámetro SKU en la URL. Ejemplo: /?sku=209374"
         ),
     }), 400
 
@@ -37,24 +37,35 @@ def obtener_precio():
   }
 
   try:
-    # Obtenemos un buildId fresco, con respaldo fijo por si la home se pone pesada
-    build_id = "yIwmJ6bE4IQPRstVmEt5r"
-    try:
-      home_res = scraper.get(
-          "https://www.homedepot.com.mx/", headers=headers, timeout=5
-      )
-      match_nd = re.search(r'"buildId"\s*:\s*"([^"]+)"', home_res.text)
-      if match_nd:
-        build_id = match_nd.group(1)
-    except:
-      pass
+    # Paso 0: Obtener un buildId fresco directamente de la página principal
+    home_res = scraper.get(
+        "https://www.homedepot.com.mx/", headers=headers, timeout=10
+    )
 
-    # Headers específicos para Next.js JSON
+    build_id = None
+    match_nd = re.search(r'"buildId"\s*:\s*"([^"]+)"', home_res.text)
+    if match_nd:
+      build_id = match_nd.group(1)
+    else:
+      match_gen = re.search(r'/_next/data/([^/]+)/', home_res.text)
+      if match_gen:
+        build_id = match_gen.group(1)
+
+    if not build_id:
+      return jsonify({
+          "status": "error",
+          "sku": sku,
+          "mensaje": (
+              "Cloudflare bloqueó temporalmente la sesión. Intenta de nuevo."
+          ),
+      }), 500
+
+    # Headers específicos para peticiones Next.js JSON
     json_headers = headers.copy()
     json_headers["Accept"] = "application/json, text/plain, */*"
     json_headers["X-Nextjs-Data"] = "1"
 
-    # Paso 1: Consultar el JSON del SKU con la tienda 8734
+    # Paso 1: Consultar el JSON del SKU con la tienda 8734 y el buildId fresco
     url_paso1 = f"https://www.homedepot.com.mx/_next/data/{build_id}/default/s/{sku}.json?keyword={sku}&storeId=8734"
     res1 = scraper.get(url_paso1, headers=json_headers, timeout=10)
 
